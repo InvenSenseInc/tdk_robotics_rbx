@@ -1,0 +1,28 @@
+This application loads firmware to the chirp sensor. It loads firmware for both CH101 and CH201.
+It can only load one type of firmware every time it is called. So this application needs to be called twice to load firmware
+for CH101 and CH201 respectively. The name of the firmware is important. The string "ch101_XXXX" means it is for CH101 
+sensor while string "ch201_XXX" means it is for CH201 firmware.
+The firmware must be pre-stored in the directory "/usr/share/tdk". 
+Only one option will be taken. It can be "-h", "-n" or "-p". If you input more than one option. Those options will be ignored.
+The firmware has a dedicated format, which can be converted using script "convert_intel_hex.pl" if the original firmware is in
+Intel Hex format. The format is described as follows:
+
+firmware--->2048 bytes
+size of the init data--> 1 bytes
+address of init data--> 2 bytes
+init data-->up to 29 bytes. If less than 29 bytes, it is padded with 0.
+
+
+Usage:
+-h: print this help
+-n x: load pre-defined firmware 
+    0: v39.hex, CH101 firmware 
+    1: v39_IQ_debug-02.hex, canned firmware for CH101
+    2: ch101_gpr_rxopt_v41b.bin, new version of CH101 firmware
+    3: ch101_gpr_rxopt_v41b-IQ_Debug.bin, new version of CH101 canned firmware
+    4: ch201_old.bin, CH201 firmware
+    5: ch201_gprmt_v10a.bin, CH201 newer version firmware
+    6: ch201_gprmt_v10a-IQ_Debug.bin, canned version of CH201 firmware
+-p x: load firmware with specified name. The file name must start with "ch101" for CH101 sensor
+      or "ch201" for CH201 sensor. The file must be pushed to "/usr/share/tdk" before it is loaded.
+

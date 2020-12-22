@@ -12,7 +12,7 @@ DEPENDS += "libutils"
 DEPENDS += "common-headers"
 DEPENDS += "glib-2.0"
 
-LDFLAGS += "-lm"
+LDFLAGS += "-lm -L${WORKDIR} -Wl,-Bstatic -lInvnAlgoRangeFinder -Wl,-Bdynamic -lgcc_s"
 
 PACKAGES = "${PN}"
 
@@ -22,6 +22,9 @@ FILESPATH =+ "${WORKSPACE}:"
 SRC_URI = "file://tdk-chx01-get-data.c"
 SRC_URI += "file://Makefile.am"
 SRC_URI += "file://configure.ac"
+SRC_URI += "file://invn_algo_rangefinder.h"
+SRC_URI += "file://invn/common/invn_types.h"
+SRC_URI += "file://libInvnAlgoRangeFinder.a"
 
 S = "${WORKDIR}"
 

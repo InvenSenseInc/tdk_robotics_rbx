@@ -3,7 +3,8 @@ ACLOCAL_AMFLAGS = -I m4
 bin_PROGRAMS = tdk-chx01-get-data-app
 
 AM_CPPFLAGS = -I./                \
--I../recipe-sysroot/usr/include
+-I../recipe-sysroot/usr/include \
+-I ./invn/common/
 
 tdk_chx01_get_data_app_SOURCES := \
     tdk-chx01-get-data.c

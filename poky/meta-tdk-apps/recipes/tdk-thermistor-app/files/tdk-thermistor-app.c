@@ -34,7 +34,7 @@
 #define TEMP_SENSOR_B   (3988)
 #define TEMP_R_INF	  (0.0155223)
 #define MAX_SYSFS_NAME_LEN      (100)
-
+#define NS_IN_SEC (1000000000.00)
 #define ARRAY_SIZE(x) sizeof(x)
 
 //#define DEBUG
@@ -529,10 +529,10 @@ int main(int argc, char *argv[])
 
 					ret = 0;
 
-					printf("TS: %f Temperature : %f\n", (double)ts, temperature_c);
+					printf("TS: %f Temperature : %f\n", (double)(ts/NS_IN_SEC), temperature_c);
 
 					if (thermistor_log_fp != NULL)
-						fprintf(thermistor_log_fp, "%f,5,%f\n", (double)ts, temperature_c);
+						fprintf(thermistor_log_fp, "%f,5,%f\n", (double)(ts/NS_IN_SEC), temperature_c);
 						//sleep(1);
 				}
 			}

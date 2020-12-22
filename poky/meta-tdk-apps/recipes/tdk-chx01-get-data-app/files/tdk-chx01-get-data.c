@@ -1,3 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2020 InvenSense, Inc.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
 #include <poll.h>
 #include <fcntl.h>
 #include <sys/types.h>
@@ -6,14 +20,36 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
- 
+
+#include "invn_algo_rangefinder.h"
+
 long long orig_buffer[32];
 
-int sensor_connected[]={0, 0, 0, 0, 0, 0};
+int sensor_connected[] = {0, 0, 0, 0, 0, 0};
+uint32_t op_freq[] = {0, 0, 0, 0, 0, 0};
 
+static InvnAlgoRangeFinderInput inputs;
+static InvnAlgoRangeFinderOutput outputs;
+
+static InvnAlgoRangeFinderConfig algo_config;
+
+/*! \struct InvnRangeFinder
+ * InvnRangeFinder data structure that store internal algorithm state.
+ * The struct below shows one method to align the data buffer pointer
+ * to 32 bit for 32bit MCU.
+ * Other methods can be used to align memory using malloc or
+ * attribute((aligned, 4))
+ */
+typedef union InvnRangeFinder {
+	uint8_t data[INVN_RANGEFINDER_DATA_STRUCTURE_SIZE];
+	uint32_t data32;
+} InvnRangeFinder;
+
+
+static InvnRangeFinder algo;
 
 #define CHIRP_NAME		"ch101"
-#define IIO_DIR 		"/sys/bus/iio/devices/"
+#define IIO_DIR		"/sys/bus/iio/devices/"
 #define FIRMWARE_PATH		"/usr/share/tdk/"
 #define MAX_SYSFS_NAME_LEN	(100)
 
@@ -21,28 +57,54 @@ int sensor_connected[]={0, 0, 0, 0, 0, 0};
 
 static char sysfs_path[MAX_SYSFS_NAME_LEN] = {0};
 static char dev_path[MAX_SYSFS_NAME_LEN] = {0};
+static char sensor_connection[6];
 
-int check_sensor_connection(){
+static int init_algo(int samples, int16_t *iq_buffer)
+{
+	int res;
+
+	// Nominal config
+	algo_config.ringdown_index = 19;
+	algo_config.maintain_distance = 3;
+	algo_config.min_scaling_factor = 137;
+	algo_config.max_scaling_factor = 400;
+	algo_config.noise_amplitude = 500;
+	algo_config.sizeData = samples;
+	algo_config.range_to_mm = 770;
+
+	inputs.nbr_samples = samples;
+	inputs.iq_buffer = iq_buffer;
+
+	res = invn_algo_rangefinder_init(&algo, &algo_config);
+
+	return res;
+}
+
+int check_sensor_connection(void)
+{
 	int i;
-	int fd;
 	FILE *fp;
 	char file_name[100];
-	
-    for(i=0;i<6;i++){
-		sprintf(file_name, "%s/in_positionrelative%d_raw", sysfs_path, i+18);
-		fd = open(file_name, O_RDONLY);
-		if((fp = fopen(file_name, "rt")) == NULL)
-		if(fd <0){
+
+	for (i = 0; i < 6; i++) {
+		snprintf(file_name, 100, "%s/in_positionrelative%d_raw",
+			sysfs_path, i+18);
+		fp = fopen(file_name, "rt");
+		if (fp == NULL) {
 			printf("error opening %s\n", file_name);
 			exit(0);
-		} else{
+		} else {
 			//printf("open %s OK\n", file_name);
 		}
-		fscanf(fp, "%d", &sensor_connected[i]);
+		fscanf(fp, "%d", &op_freq[i]);
 		fclose(fp);
-		printf("%d\n", sensor_connected[i]);
-	}	
-	
+		if (op_freq[i])
+			sensor_connected[i] = 1;
+		else
+			sensor_connected[i] = 0;
+		printf("%d, %d\n", sensor_connected[i], op_freq[i]);
+	}
+
 	return 0;
 }
 
@@ -69,7 +131,7 @@ int find_type_by_name(const char *name, const char *type)
 	dp = opendir(IIO_DIR);
 	if (dp == NULL) {
 		printf("No industrialio devices available\n");
-		return -1;
+		return -EINVAL;
 	}
 
 	while (ent = readdir(dp), ent != NULL) {
@@ -116,40 +178,46 @@ exit_closedir:
 static int process_sysfs_request(char *data)
 {
 	int dev_num = find_type_by_name(CHIRP_NAME, "iio:device");
-	if (dev_num < 0)
-		return -1;
 
-	sprintf(data, IIO_DIR "iio:device%d", dev_num);
-	sprintf(dev_path,  "/dev/iio:device%d", dev_num);
+	if (dev_num < 0)
+		return -EINVAL;
+
+	snprintf(data, 100, IIO_DIR "iio:device%d", dev_num);
+	snprintf(dev_path,  100, "/dev/iio:device%d", dev_num);
 
 	return 0;
 }
 
 
-int switch_streaming(int on){
+int switch_streaming(int on)
+{
 	int i;
-	
+
 	FILE *fp;
 	char file_name[100];
-	
-    for(i=0;i<6;i++){
-		sprintf(file_name, "%s/scan_elements/in_proximity%d_en", sysfs_path, i);
-		if((fp = fopen(file_name, "wt")) == NULL) {
+
+	for (i = 0; i < 6; i++) {
+		snprintf(file_name, 100, "%s/scan_elements/in_proximity%d_en",
+			sysfs_path, i);
+		fp = fopen(file_name, "wt");
+		if (fp == NULL) {
 			printf("error opening %s\n", file_name);
 			exit(0);
-		} else{
+		} else {
 			//printf("open %s OK\n", file_name);
 		}
 		fprintf(fp, "%d", sensor_connected[i] & on);
 		fclose(fp);
 	}
 	//add 6 for distance
-    for(i=0;i<6;i++){
-		sprintf(file_name, "%s/scan_elements/in_distance%d_en", sysfs_path, i+6);
-		if((fp = fopen(file_name, "wt")) == NULL) {
+	for (i = 0; i < 6; i++) {
+		snprintf(file_name, 100, "%s/scan_elements/in_distance%d_en",
+			sysfs_path, i+6);
+		fp = fopen(file_name, "wt");
+		if (fp == NULL) {
 			printf("error opening %s\n", file_name);
 			exit(0);
-		} else{
+		} else {
 			//printf("open %s OK\n", file_name);
 		}
 		fprintf(fp, "%d", sensor_connected[i] & on);
@@ -157,108 +225,238 @@ int switch_streaming(int on){
 	}
 
 	//add 12 for intensity
-    for(i=0;i<6;i++){
-		sprintf(file_name, "%s/scan_elements/in_intensity%d_en", sysfs_path, i+12);
-		if((fp = fopen(file_name, "wt")) == NULL) {
+	for (i = 0; i < 6; i++) {
+		snprintf(file_name, 100, "%s/scan_elements/in_intensity%d_en",
+			sysfs_path, i+12);
+		fp = fopen(file_name, "wt");
+		if (fp == NULL) {
 			printf("error opening %s\n", file_name);
 			exit(0);
-		} else{
+		} else {
 			//printf("open %s OK\n", file_name);
 		}
 		fprintf(fp, "%d", sensor_connected[i] & on);
 		fclose(fp);
 	}
-	
+
 	//add 18 for intensity(rx/tx id)
-    for(i=0;i<6;i++){
-		sprintf(file_name, "%s/scan_elements/in_positionrelative%d_en", sysfs_path, i+18);
-		if((fp = fopen(file_name, "wt")) == NULL) {
+	for (i = 0; i < 6; i++) {
+		snprintf(file_name, 100,
+			"%s/scan_elements/in_positionrelative%d_en",
+				sysfs_path, i+18);
+		fp = fopen(file_name, "wt");
+		if (fp == NULL) {
 			printf("error opening %s\n", file_name);
 			exit(0);
-		} else{
+		} else {
 			//printf("open %s OK\n", file_name);
 		}
 		fprintf(fp, "%d", sensor_connected[i] & on);
 		fclose(fp);
 	}
-	
-	sprintf(file_name, "%s/scan_elements/in_timestamp_en", sysfs_path);
-	if((fp = fopen(file_name, "wt")) == NULL) {
+
+	snprintf(file_name, 100, "%s/scan_elements/in_timestamp_en",
+		sysfs_path);
+	fp = fopen(file_name, "wt");
+	if (fp == NULL) {
 		printf("error opening proximity\n");
 		exit(0);
-	} else{
+	} else {
 		//printf("open proximity OK\n");
 	}
 	fprintf(fp, "%d", on);
 	fclose(fp);
-	
-	sprintf(file_name, "%s/buffer/length", sysfs_path);
-	if((fp = fopen(file_name, "wt")) == NULL) {
-	    printf("error opening length\n");
-	    exit(0);
-	} else{
-	   //printf("open length OK\n");
+
+	snprintf(file_name, 100, "%s/buffer/length", sysfs_path);
+	fp = fopen(file_name, "wt");
+	if (fp == NULL) {
+		printf("error opening length\n");
+		exit(0);
+	} else {
+		//printf("open length OK\n");
 	}
 	fprintf(fp, "%d", 2000);
 	fclose(fp);
 
-	sprintf(file_name, "%s/buffer/watermark", sysfs_path);
-	if((fp = fopen(file_name, "wt")) == NULL) {
-	    printf("error opening watermark\n");
-	    exit(0);
-	} else{
+	snprintf(file_name, 100, "%s/buffer/watermark", sysfs_path);
+	fp = fopen(file_name, "wt");
+	if (fp == NULL) {
+		printf("error opening watermark\n");
+		exit(0);
+	} else {
 	   //printf("open watermark OK\n");
 	}
 	fprintf(fp, "%d", 1);
 	fclose(fp);
-	
-	sprintf(file_name, "%s/buffer/enable", sysfs_path);
-	if((fp = fopen(file_name, "wt")) == NULL) {
-	    printf("error opening master enable\n");
-	    exit(0);
-	} else{
-	   printf("open master enable OK\n");
+
+	snprintf(file_name, 100, "%s/buffer/enable", sysfs_path);
+	fp = fopen(file_name, "wt");
+	if (fp == NULL) {
+		printf("error opening master enable\n");
+		exit(0);
+	} else {
+		printf("open master enable OK\n");
 	}
 	fprintf(fp, "%d", 1 & on);
 	fclose(fp);
-	
+
 }
 
-short I[6][200], Q[6][200];
+int16_t I[6][130], Q[6][130];
+int16_t iq_buffer[130 * 2];
+float sample_to_mm[6];
+#define CH_SPEEDOFSOUND_MPS	343
+
 unsigned short distance[6], amplitude[6];
 char mode[6];
-void print_header(int sample, int frequency, FILE *fp){
-	int i;
-	
+void print_header(int sample, int frequency, FILE *fp)
+{
+	int i, j;
+	float pos;
+
+	for (i = 0; i < 6; i++) {
+		if (op_freq[i]) {
+			sample_to_mm[i] =
+				(sample*CH_SPEEDOFSOUND_MPS * 8 * 1000)
+				/ (op_freq[i] * 2);
+			//printf("to_mm=%f\n", sample_to_mm[i]);
+		}
+	}
+
 	fprintf(fp, "# Chirp Microsystems redswallow Data Log\n");
 
-	fprintf(fp, "# sample rate: %d S/s\n", frequency*sample);
-	fprintf(fp, "# Decimation factor: 1\n");
+	fprintf(fp, "# sample rate:, %d S/s\n", frequency*sample);
+	fprintf(fp, "# Decimation factor:, 1\n");
 	fprintf(fp, "# Content: iq\n");
-	fprintf(fp, "# Sensors ID: ");
-	for (i=0;i<6;i++){
-		if(sensor_connected[i]){
+	fprintf(fp, "# Sensors ID:, ");
+	for (i = 0; i < 6; i++) {
+		if (sensor_connected[i])
 			fprintf(fp, "%d, ", i);
-		}
 	}
-	fprintf(fp, "\n# Sensors FOP: 178860,178406 Hz\n");
-	fprintf(fp, "# Sensors NB Samples:"); 
-	for (i=0;i<6;i++){
-		if(sensor_connected[i]){
+	fprintf(fp, "\n# Sensors FOP:, ");
+	for (i = 0; i < 6; i++) {
+		if (sensor_connected[i])
+			fprintf(fp, "%d, ", op_freq[i]);
+	}
+	fprintf(fp, "Hz\n");
+
+	fprintf(fp, "# Sensors NB Samples:,");
+	for (i = 0; i < 6; i++) {
+		if (sensor_connected[i])
 			fprintf(fp, "%d, ", sample);
+	}
+	fprintf(fp, "\n# Sensors NB First samples skipped:, 0, 0\n");
+	for (j = 0; j < 6; j++) {
+		if (sensor_connected[j]) {
+			fprintf(fp,
+"# time [s],tx_id,rx_id, range [cm],intensity [a.u.], target_detected, ");
+			pos = 0;
+			for (i = 0; i < sample; i++) {
+				pos += sample_to_mm[j];
+				fprintf(fp, "i_data_%3.1f, ", pos/1000.0);
+			}
+			pos = 0;
+			for (i = 0; i < sample; i++) {
+				pos += sample_to_mm[j];
+				fprintf(fp, "q_data_%3.1f, ", pos/1000.0);
+			}
+			fprintf(fp, "\n");
 		}
 	}
-	fprintf(fp, "\n# Sensors NB First samples skipped: 0,0\n");	
-	fprintf(fp, "# time [s],tx_id,rx_id, range [cm],intensity [a.u.], target_detected, ");
-	for(i=0;i<sample;i++){
-		fprintf(fp, "i_data_%d, ", i);
-	}
-	for(i=0;i<sample;i++){
-		fprintf(fp, "q_data_%d, ", i);
-	}
-	fprintf(fp,"\n");
 }
-int main(int argc, char *argv[]){
+
+static void print_help(void)
+{
+	printf("Usage:\n");
+	printf("-h: print this help\n");
+	printf("-d x: duration,  unit in seconds. default: 10 seconds\n");
+	printf("-s x: number of samples. default: 40 samples\n");
+	printf("-f x: sampling frequency. Default: 5 Hz\n");
+	printf(
+	"-l string: output logging file name. Default: \"/usr/chirp.csv\"\n");
+
+}
+
+void log_data(int num_sensors, int sample, FILE *log_fp,
+	long long last_timestamp)
+{
+	int dev_num, i, j;
+
+	for (dev_num = 0; dev_num < num_sensors; dev_num++) {
+	//only CH101 and only in RX_TX mode, we call algo to calculate
+		if (((mode[dev_num] == 0x20) || (mode[dev_num] == 0x10)) &&
+			(sensor_connection[dev_num] < 3)) {
+			for (i = 0; i < sample; i++) {
+				iq_buffer[2*i] = I[dev_num][i];
+				iq_buffer[2*i+1] = Q[dev_num][i];
+			}
+			//for (i = 0; i < inputs.nbr_samples*2; i++) {
+				//printf("%d, ", inputs.iq_buffer[i]);
+			//}
+			//printf("\n");
+
+
+			invn_algo_rangefinder_process(&algo, &inputs, &outputs);
+	//printf("$$mode=%d, id=%d distance=%d, mag=%d\n",
+	// mode[dev_num], sensor_connection[dev_num],
+	//	outputs.distance_to_object, outputs.magnitude_of_object);
+
+			distance[dev_num] = outputs.distance_to_object;
+			amplitude[dev_num] = outputs.magnitude_of_object;
+		}
+	}
+
+	for (dev_num = 0; dev_num < num_sensors; dev_num++) {
+		if (mode[dev_num] == 0) {
+			printf("mode 0 here\n");
+			break;
+		}
+		fprintf(log_fp, "%f, ", last_timestamp/1000000000.0);
+		//printf("%f, ", last_timestamp/1000000000.0);
+
+		//TX_RX mode
+		if (mode[dev_num] == 0x10) {
+			fprintf(log_fp, "%d, ", sensor_connection[dev_num]);
+			fprintf(log_fp, "%d, ", sensor_connection[dev_num]);
+		}
+
+		//RX only mode.
+		if (mode[dev_num] == 0x20) {
+			for (j = 0; j < num_sensors; j++) {
+				if ((mode[j] == 0x10) &&
+				(sensor_connection[j] < 3)) {
+					fprintf(log_fp, "%d, ",
+						sensor_connection[j]);
+				}
+			}
+			fprintf(log_fp, "%d, ", sensor_connection[dev_num]);
+		}
+
+		fprintf(log_fp, "%d, ", distance[dev_num]/10);
+		fprintf(log_fp, "%d, ", amplitude[dev_num]);
+		if ((distance[dev_num] == 0xFFFF) ||
+			(distance[dev_num] == 0)) {
+			fprintf(log_fp, "%d, ", 0);
+		} else {
+			fprintf(log_fp, "%d, ", 1);
+		}
+
+		if (dev_num < 3) {
+			for (i = 0; i < sample; i++) {
+				fprintf(log_fp, "%d, ", I[dev_num][i]);
+				//printf("%d, ", I[dev_num][i]);
+			}
+			for (i = 0; i < sample; i++) {
+				fprintf(log_fp, "%d, ", Q[dev_num][i]);
+				//printf("%d, ", Q[dev_num][i]);
+			}
+		}
+		fprintf(log_fp, "\n");
+	}
+}
+
+int main(int argc, char *argv[])
+{
 	FILE *fp;
 	FILE *log_fp;
 	char *buffer;
@@ -272,249 +470,223 @@ int main(int argc, char *argv[]){
 	int num_sensors;
 	int ready;
 	int index;
-	char sensor_connection[6];	
-    int nfds, num_open_fds;
-    struct pollfd pfds[1];
-    int dur, sample, freq;
-    char *log_file;
-    
-    buffer = (char*)orig_buffer;
-		
-	printf("tdk load chirp firmware, version 1.2\n");
+	int nfds, num_open_fds;
+	struct pollfd pfds[1];
+	int dur, sample, freq;
+	char *log_file;
+	int c;
+
+	buffer = (char *)orig_buffer;
+	printf("tdk chirp sensor get data application, version 1.9\n");
+
 	// get absolute IIO path & build MPU's sysfs paths
 	if (process_sysfs_request(sysfs_path) < 0) {
 		printf("Cannot find %s sysfs path\n", CHIRP_NAME);
 		exit(0);
 	}
 
-	printf("%s sysfs path: %s, dev path=%s\n", CHIRP_NAME, sysfs_path, dev_path);
-		
-    dur = 10;
-    sample = 40;
-    freq = 5;
-    log_file = "/usr/chirp.csv";
-	int c;
-	
-	opterr = 0;	
-	while ((c = getopt (argc, argv, "d:s:f:l:")) != -1){
-	switch (c)
-	  {
-	  case 'd':
-		dur= atoi(optarg);
-		break;
-	  case 's':
-		sample = atoi(optarg);
-		break;
-	  case 'f':
-		freq = atoi(optarg);
-		break;
-	  case 'l':
-		log_file = optarg;
-		break;
-	  default:
-		abort ();
-	  }
+	printf("%s sysfs path: %s, dev path=%s\n",
+		CHIRP_NAME, sysfs_path, dev_path);
+
+	dur = 10;
+	sample = 80;
+	freq = 5;
+	log_file = "/usr/chirp.csv";
+
+	opterr = 0;
+	while ((c = getopt(argc, argv, "hd:s:f:l:")) != -1) {
+		switch (c) {
+		case 'h':
+			print_help();
+			return 0;
+		case 'd':
+			dur = atoi(optarg);
+			break;
+		case 's':
+			sample = atoi(optarg);
+			break;
+		case 'f':
+			freq = atoi(optarg);
+			break;
+		case 'l':
+			log_file = optarg;
+			break;
+		default:
+			abort();
+		}
 	}
-	printf("options11, log file=%s, frequency=%d, samples=%d, duration=%d seconds\n",  log_file, freq, sample, dur);
-    
+	printf(
+"options, log file=%s, frequency=%d, samples=%d, duration=%d seconds\n",
+	log_file, freq, sample, dur);
+
 	index = 0;
 	counter = freq*dur;
-	
-    
-	for (i=0;i<6;i++) {
-		sprintf(file_name, "%s/in_positionrelative%d_raw", sysfs_path, i+18);
-		if((fp = fopen(file_name, "wt")) == NULL) {
+
+	if (init_algo(sample, iq_buffer)) {
+		printf("algo init error\n");
+		exit(0);
+	}
+
+	for (i = 0; i < 6; i++) {
+		snprintf(file_name, 100, "%s/in_positionrelative%d_raw",
+			sysfs_path, i+18);
+		fp = fopen(file_name, "wt");
+		if (fp == NULL) {
 			printf("error opening %s\n", file_name);
 			exit(0);
-		} else{
-			printf("open %s OK, with %d\n", file_name, sample);
+		} else {
+			//printf("open %s OK, with %d\n", file_name, sample);
 		}
 		fprintf(fp, "%d", sample);
 		fclose(fp);
 	}
-	
+
 	check_sensor_connection();
-		
+
 	last_timestamp = 0;
 	timestamp = 0;
 	scan_bytes = 0;
 	num_sensors = 0;
-	for(i=0;i<6;i++){
+	for (i = 0; i < 6; i++) {
 		scan_bytes += sensor_connected[i]*32;
 		num_sensors += sensor_connected[i];
 	}
 	index = 0;
-	for(i=0;i<6;i++) {
-		if(sensor_connected[i] == 1) {
+	for (i = 0; i < 6; i++) {
+		if (sensor_connected[i] == 1) {
 			sensor_connection[index] = i;
 			index++;
 		}
 	}
-	if((log_fp=fopen(log_file, "wt"))==NULL){
+
+	log_fp = fopen(log_file, "wt");
+	if (log_fp == NULL) {
 		printf("error opening log file %s\n", log_file);
 		exit(0);
 	}
-	print_header(sample, freq, log_fp);	
-	//fclose(log_fp);
-	//return 0;
+	print_header(sample, freq, log_fp);
 
-	scan_bytes += 32;	
-	
+	scan_bytes += 32;
+
 	printf("counter=%d\n", counter);
-	
+
 	// counter controls how many times it will run.
-	sprintf(file_name, "%s/calibbias", sysfs_path);
-	if((fp = fopen(file_name, "wt")) == NULL) {
+	snprintf(file_name, 100, "%s/calibbias", sysfs_path);
+	fp = fopen(file_name, "wt");
+	if (fp == NULL) {
 		printf("error opening %s\n", file_name);
 		exit(0);
-	} else{
+	} else {
 		printf("open %s OK\n", file_name);
 	}
 	fprintf(fp, "%d", counter);
-	fclose(fp);	
+	fclose(fp);
 
-	sprintf(file_name, "%s/sampling_frequency", sysfs_path);
-	if((fp = fopen(file_name, "wt")) == NULL) {
+	snprintf(file_name, 100, "%s/sampling_frequency", sysfs_path);
+
+	fp = fopen(file_name, "wt");
+	if (fp == NULL) {
 		printf("error opening %s\n", file_name);
 		exit(0);
-	} else{
+	} else {
 		printf("open %s OK\n", file_name);
 	}
 	fprintf(fp, "%d", freq);
-	fclose(fp);	
+	fclose(fp);
 
-	for(i=0;i<40;i++){
-		buffer[i] = 0;
-	}
 	total_bytes = 0;
 	switch_streaming(1);
 
 
-	pfds[0].fd = open(dev_path, O_RDONLY);	
+	pfds[0].fd = open(dev_path, O_RDONLY);
 	pfds[0].events = (POLLIN | POLLRDNORM);
 	last_timestamp = 0;
-	
-	ready=1;
-	while(ready == 1) {	
+
+	ready = 1;
+	while (ready == 1) {
 
 		char *tmp;
 		short value;
 		char *ptr;
 		int dev_num;
-				
+
 		pfds[0].revents = 0;
 		//printf("before new polling counter=%d\n", counter);
 		nfds = 1;
 		ready = poll(pfds, nfds, 1000);
 		//printf("pass poll 0x%x, ready=%d\n", pfds[0].revents, ready);
 		if (ready == -1)
-            printf("poll error\n");
+			printf("poll error\n");
 		if (pfds[0].revents & (POLLIN | POLLRDNORM)) {
-
 			target_bytes = scan_bytes;
 			bytes = read(pfds[0].fd, buffer, target_bytes);
 			total_bytes += bytes;
 			tmp = (char *)&timestamp;
 			memcpy(tmp, &buffer[scan_bytes - 8], 8);
-			//amplitude 2 bytes + intensity data 2 bytes 224/8 = 28bytes(IQ)+mode(1 bytes)
+	//amplitude 2 bytes + intensity data
+	//2 bytes 224/8 = 28bytes(IQ)+mode(1 bytes)
 			target_bytes = scan_bytes-32;
 			i = 0;
-			for(i=0;i<64;i++){
+			//for (i = 0; i < 64; i++) {
 				//printf("%d, ", buffer[i]);
-			}
+			//}
 			//printf("\n");
-			if (last_timestamp == 0) {
+			if (last_timestamp == 0)
+				last_timestamp = timestamp;
+
+			if (last_timestamp != timestamp) {
+
+				index -= 7;
+				log_data(num_sensors, sample, log_fp,
+					last_timestamp);
+
+				index = 0;
 				last_timestamp = timestamp;
 			}
-			
-			if (last_timestamp != timestamp) {
-				index -= 7;
-				
-				
-				for(dev_num=0;dev_num<num_sensors;dev_num++) {
-					fprintf(log_fp, "%f, ", last_timestamp/1000000000.0);
-					//printf("%f, ", last_timestamp/1000000000.0);
-				
-					for(j=0;j<num_sensors;j++) {
-						if(mode[j]==0x10){
-							fprintf(log_fp, "%d, ", sensor_connection[j]);
 
-						}
-					}					
-					
-					for(j=0;j<num_sensors;j++) {
-						if(mode[j]==0x20){
-							fprintf(log_fp, "%d, ", sensor_connection[j]);
-						}
-					}					
-					fprintf(log_fp, "%d, ", distance[dev_num]);
-					fprintf(log_fp, "%d, ", amplitude[dev_num]);
-					if(distance[dev_num]==0xFFFF){
-						fprintf(log_fp, "%d, ", 0);
-					}else {
-						fprintf(log_fp, "%d, ", 1);
-					}
-
-
-					for(i=0;i<sample;i++) {
-						fprintf(log_fp, "%d, ", I[dev_num][i]);
-						//printf("%d, ", I[dev_num][i]);
-					}
-					for(i=0;i<sample;i++) {
-						fprintf(log_fp, "%d, ", Q[dev_num][i]);
-						//printf("%d, ", Q[dev_num][i]);
-					}
-					fprintf(log_fp, "\n");
-				
-					last_timestamp = timestamp;
-					index = 0;
-				}
-			}
-			
 			//printf("\nindex=%d\n", index);
-			for(j=0;j<num_sensors;j++) {
-				for(i=0;i<7;i++){
+			for (j = 0; j < num_sensors; j++) {
+				for (i = 0; i < 7; i++) {
 					value = buffer[i*4+1+j*28];
-					value <<=8;
+					value <<= 8;
 					value += buffer[i*4+j*28];
 					I[j][i+index] = value;
 
 					value = buffer[i*4+3+j*28];
-					value <<=8;
+					value <<= 8;
 					value += buffer[i*4+2+j*28];
-					
+
 					Q[j][i+index] = value;
-					//printf("%d, %d", I[j][i], Q[j][i]);					
+					//printf("%d, %d", I[j][i], Q[j][i]);
 				}
 			}
 			//printf("\n");
 			index += 7;
-			
+
 			ptr = buffer + 28*num_sensors;
 
-			for(j=0;j<num_sensors;j++) {
+			for (j = 0; j < num_sensors; j++) {
 				distance[j] = ptr[1+j*2];
 				distance[j] <<= 8;
 				distance[j] += ptr[j*2];
 			}
-			
+
 			ptr += 2*num_sensors;
-			
-			for(j=0;j<num_sensors;j++) {
+
+			for (j = 0; j < num_sensors; j++) {
 				amplitude[j] = ptr[1+j*2];
 				amplitude[j] <<= 8;
-				amplitude[j] += ptr[j*2];			
+				amplitude[j] += ptr[j*2];
 			}
 
 			ptr += 2*num_sensors;
-			
-			for(j=0;j<num_sensors;j++) {
+
+			for (j = 0; j < num_sensors; j++)
 				mode[j] = ptr[j];
-			}				
 		}
 	}
 	switch_streaming(0);
 	fclose(log_fp);
-	
-	return 0;	
+
+	return 0;
 }

@@ -1,0 +1,51 @@
+Modifications on TDK Sensor & Motor Mezz A Board for two BLDC motors.
+Revision date: December 01, 2020
+
+J3   set 2-4 and 1-3 (VDC_MOTOR = BATT_IN)
+
+SW10 set position 0 (Snapdragon UART connected to HVC 4223F master)
+SW11 set position 0 (Dynamixels connected to HVC 4223F Slave)
+
+J7   closed (MVSS0 connected to MVSS1)
+R127 removed (only one common low side shunt R128 is used)
+J8   open (LGPIO0 not connected to MVSS0)
+J9   open (LGPIO1 not connected to MVSS1)
+J10  closed (LGPIO0 pull-up connected)
+J11  closed (LGPIO1 pull-up connected)
+J12  closed (LGPIO7 pull-up connected)
+J17  set 1-2 (VSUP_SENSOR = 5 V)
+
+J10  closed (MVSS0 connected to MVSS1)
+R139 removed (only one common low side shunt R138 is used)
+J19  open (LGPIO0 not connected to MVSS0)
+J20  open (LGPIO1 not connected to MVSS1)
+J21  closed (LGPIO0 pull-up connected)
+J22  closed (LGPIO1 pull-up connected)
+J23  closed (LGPIO7 pull-up connected)
+J27  set 1-2 (VSUP_SENSOR = 5 V)
+
+
+Master BLDC motor connected to J6:
+Motor phase-U connected to MOT_U1 and MOT_U2
+Motor phase-V connected to MOT_V1 and MOT_V2
+Motor phase-W connected to MOT_W1 and MOT_W2
+
+Master motor sensors connected to J31:
+Hall-A connected to DIG0
+Hall-B connected to DIG1
+Hall-C connected to DIG7_SPI_CSN
+Hall-VCC connected to VSUP_SENSOR
+HALL-GND connected to GND
+
+
+Slave BLDC motor connected to J14:
+Motor phase-U connected to SLAVE_MOT_U1 and SLAVE_MOT_U2
+Motor phase-V connected to SLAVE_MOT_V1 and SLAVE_MOT_V2
+Motor phase-W connected to SLAVE_MOT_W1 and SLAVE_MOT_W2
+
+Slave motor sensors connected to J31:
+Hall-A connected to SLAVE_DIG0
+Hall-B connected to SLAVE_DIG1
+Hall-C connected to SLAVE_DIG7_SPI_CSN
+Hall-VCC connected to SLAVE_VSUP_SENSOR
+HALL-GND connected to GND
