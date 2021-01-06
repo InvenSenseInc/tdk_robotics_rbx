@@ -40,20 +40,34 @@ static InvnAlgoRangeFinderConfig algo_config;
  * Other methods can be used to align memory using malloc or
  * attribute((aligned, 4))
  */
-typedef union InvnRangeFinder {
+union InvnRangeFinder {
 	uint8_t data[INVN_RANGEFINDER_DATA_STRUCTURE_SIZE];
 	uint32_t data32;
-} InvnRangeFinder;
+};
 
 
-static InvnRangeFinder algo;
+static union InvnRangeFinder algo;
 
 #define CHIRP_NAME		"ch101"
 #define IIO_DIR		"/sys/bus/iio/devices/"
 #define FIRMWARE_PATH		"/usr/share/tdk/"
 #define MAX_SYSFS_NAME_LEN	(100)
+#define CH101_DEFAULT_FW       2
+#define CH201_DEFAULT_FW       5
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
+
+static const char  *const fw_names[] = {
+"v39.hex",
+"v39_IQ_debug-02.hex",
+"ch101_gpr_rxopt_v41b.bin",
+"ch101_gpr_rxopt_v41b-IQ_Debug.bin",
+"ch201_old.bin",
+"ch201_gprmt_v10a.bin",
+"ch201_gprmt_v10a-IQ_Debug.bin",
+};
+
+static char *firmware_path;
 
 static char sysfs_path[MAX_SYSFS_NAME_LEN] = {0};
 static char dev_path[MAX_SYSFS_NAME_LEN] = {0};
@@ -78,6 +92,112 @@ static int init_algo(int samples, int16_t *iq_buffer)
 	res = invn_algo_rangefinder_init(&algo, &algo_config);
 
 	return res;
+}
+
+int inv_load_dmp(char *dmp_path, int dmp_version,
+	const char *dmp_firmware_path)
+{
+	int result = 0;
+	int bytesWritten = 0;
+	FILE *fp, *fp_read;
+	int write_size, len;
+	char firmware_file[100];
+	char bin_file[100];
+	char bank[256];
+	const char *p;
+	int fw_names_size = ARRAY_SIZE(fw_names);
+
+	snprintf(firmware_file, 100, "%s/misc_bin_dmp_firmware_vers",
+		dmp_path);
+	fp = fopen(firmware_file, "wb");
+	if (fp == NULL) {
+		printf("dmp sysfs file %s open fail\n", firmware_file);
+		fclose(fp_read);
+		return -EINVAL;
+	}
+
+	printf("file=%s\n", firmware_file);
+
+	if (dmp_version != 0xff)
+		p = (const void *)fw_names[dmp_version];
+	else
+		p = (const void *)firmware_path;
+
+	write_size = strlen(p);
+	if (write_size > 30)
+		write_size = 30;
+
+	printf("input name=%s\n", p);
+
+	bytesWritten = fwrite(p, 1, write_size, fp);
+	if (bytesWritten != write_size) {
+		printf(
+			"bytes written (%d) not match requested length (%d)\n",
+			bytesWritten, write_size);
+		result = -1;
+	}
+
+	fclose(fp);
+
+	if (dmp_version != 0xff) {
+		if (result == 0)
+			printf("dmp firmware %s written to %s\n",
+				fw_names[dmp_version], firmware_file);
+
+		if (dmp_version >= fw_names_size) {
+			printf("dmp_version %d out of range [0-%d]\n",
+				dmp_version, fw_names_size);
+			return -EINVAL;
+		}
+
+		snprintf(bin_file, 100, "%s%s", dmp_firmware_path,
+			fw_names[dmp_version]);
+	} else {
+		if (result == 0)
+			printf("dmp firmware %s written to %s\n",
+				firmware_path, firmware_file);
+		snprintf(bin_file, 100, "%s%s", dmp_firmware_path,
+			firmware_path);
+	}
+
+	fp_read = fopen(bin_file, "rb");
+	if (fp_read == NULL) {
+		printf("dmp firmware file %s open fail\n", bin_file);
+		return -EINVAL;
+	}
+
+	fseek(fp_read, 0L, SEEK_END);
+	len = ftell(fp_read);
+	fseek(fp_read, 0L, SEEK_SET);
+	snprintf(firmware_file, 100, "%s/misc_bin_dmp_firmware", dmp_path);
+
+	fp = fopen(firmware_file, "wb");
+	if (fp == NULL) {
+		printf("dmp sysfs file %s open fail\n", firmware_file);
+		fclose(fp_read);
+		return -EINVAL;
+	}
+	while (len > 0) {
+		if (len > 256)
+			write_size = 256;
+		else
+			write_size = len;
+		bytesWritten = fread(bank, 1, write_size, fp_read);
+		bytesWritten = fwrite(bank, 1, write_size, fp);
+		if (bytesWritten != write_size) {
+			printf(
+			"bytes written (%d) no match requested length (%d)\n",
+				bytesWritten, write_size);
+			result = -1;
+		}
+		len -= write_size;
+	}
+
+	fclose(fp);
+	fclose(fp_read);
+
+
+	return result;
 }
 
 int check_sensor_connection(void)
@@ -372,6 +492,7 @@ static void print_help(void)
 	printf("-d x: duration,  unit in seconds. default: 10 seconds\n");
 	printf("-s x: number of samples. default: 40 samples\n");
 	printf("-f x: sampling frequency. Default: 5 Hz\n");
+	printf("-n: not loading firmware. Default will load firmware\n");
 	printf(
 	"-l string: output logging file name. Default: \"/usr/chirp.csv\"\n");
 
@@ -441,7 +562,7 @@ void log_data(int num_sensors, int sample, FILE *log_fp,
 			fprintf(log_fp, "%d, ", 1);
 		}
 
-		if (dev_num < 3) {
+		if (sensor_connection[dev_num] < 3) {
 			for (i = 0; i < sample; i++) {
 				fprintf(log_fp, "%d, ", I[dev_num][i]);
 				//printf("%d, ", I[dev_num][i]);
@@ -474,10 +595,11 @@ int main(int argc, char *argv[])
 	struct pollfd pfds[1];
 	int dur, sample, freq;
 	char *log_file;
-	int c;
+	int c, fp_writes;
+	int load_firmware_flag;
 
 	buffer = (char *)orig_buffer;
-	printf("tdk chirp sensor get data application, version 1.9\n");
+	printf("tdk chirp sensor get data application, version 2.0\n");
 
 	// get absolute IIO path & build MPU's sysfs paths
 	if (process_sysfs_request(sysfs_path) < 0) {
@@ -492,9 +614,10 @@ int main(int argc, char *argv[])
 	sample = 80;
 	freq = 5;
 	log_file = "/usr/chirp.csv";
+	load_firmware_flag = 1;
 
 	opterr = 0;
-	while ((c = getopt(argc, argv, "hd:s:f:l:")) != -1) {
+	while ((c = getopt(argc, argv, "hd:s:f:l:n")) != -1) {
 		switch (c) {
 		case 'h':
 			print_help();
@@ -511,6 +634,9 @@ int main(int argc, char *argv[])
 		case 'l':
 			log_file = optarg;
 			break;
+		case 'n':
+			load_firmware_flag = 0;
+			break;
 		default:
 			abort();
 		}
@@ -518,6 +644,21 @@ int main(int argc, char *argv[])
 	printf(
 "options, log file=%s, frequency=%d, samples=%d, duration=%d seconds\n",
 	log_file, freq, sample, dur);
+
+	printf("firmware load=%d\n", load_firmware_flag);
+	if (load_firmware_flag) {
+		if (inv_load_dmp(sysfs_path,
+			CH101_DEFAULT_FW, FIRMWARE_PATH) != 0) {
+			printf("CH101 firmware fail\n");
+			return -EINVAL;
+		}
+
+		if (inv_load_dmp(sysfs_path,
+			CH201_DEFAULT_FW, FIRMWARE_PATH) != 0) {
+			printf("CH201 firmware fail\n");
+			return -EINVAL;
+		}
+	}
 
 	index = 0;
 	counter = freq*dur;
@@ -603,6 +744,7 @@ int main(int argc, char *argv[])
 	last_timestamp = 0;
 
 	ready = 1;
+	fp_writes = 1;
 	while (ready == 1) {
 
 		char *tmp;
@@ -613,7 +755,7 @@ int main(int argc, char *argv[])
 		pfds[0].revents = 0;
 		//printf("before new polling counter=%d\n", counter);
 		nfds = 1;
-		ready = poll(pfds, nfds, 1000);
+		ready = poll(pfds, nfds, 5000);
 		//printf("pass poll 0x%x, ready=%d\n", pfds[0].revents, ready);
 		if (ready == -1)
 			printf("poll error\n");
@@ -637,6 +779,7 @@ int main(int argc, char *argv[])
 			if (last_timestamp != timestamp) {
 
 				index -= 7;
+				fp_writes++;
 				log_data(num_sensors, sample, log_fp,
 					last_timestamp);
 
@@ -687,6 +830,12 @@ int main(int argc, char *argv[])
 	}
 	switch_streaming(0);
 	fclose(log_fp);
+
+	if (fp_writes == counter)
+		printf("PASS: setting=%d, get=%d\n", counter, fp_writes);
+	else
+		printf("FAIL: setting=%d, get=%d\n", counter, fp_writes);
+
 
 	return 0;
 }
