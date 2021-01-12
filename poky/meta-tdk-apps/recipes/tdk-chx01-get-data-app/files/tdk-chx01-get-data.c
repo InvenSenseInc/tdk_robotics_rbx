@@ -52,8 +52,12 @@ static union InvnRangeFinder algo;
 #define IIO_DIR		"/sys/bus/iio/devices/"
 #define FIRMWARE_PATH		"/usr/share/tdk/"
 #define MAX_SYSFS_NAME_LEN	(100)
+#define MAX_NUM_SAMPLES     450
 #define CH101_DEFAULT_FW       2
 #define CH201_DEFAULT_FW       5
+
+#define VER_MAJOR (0)
+#define VER_MINOR (3)
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
@@ -422,8 +426,8 @@ int switch_streaming(int on)
 
 }
 
-int16_t I[6][130], Q[6][130];
-int16_t iq_buffer[130 * 2];
+int16_t I[6][MAX_NUM_SAMPLES], Q[6][MAX_NUM_SAMPLES];
+int16_t iq_buffer[MAX_NUM_SAMPLES * 2];
 float sample_to_mm[6];
 #define CH_SPEEDOFSOUND_MPS	343
 
@@ -599,7 +603,7 @@ int main(int argc, char *argv[])
 	int load_firmware_flag;
 
 	buffer = (char *)orig_buffer;
-	printf("tdk chirp sensor get data application, version 2.0\n");
+	printf("TDK-Robotics-RB5-chx01-app-%d.%d\n",VER_MAJOR,VER_MINOR);
 
 	// get absolute IIO path & build MPU's sysfs paths
 	if (process_sysfs_request(sysfs_path) < 0) {
@@ -641,6 +645,11 @@ int main(int argc, char *argv[])
 			abort();
 		}
 	}
+	if (freq > 10)
+		freq = 10;
+	if (sample > 225)
+		sample = 225;
+
 	printf(
 "options, log file=%s, frequency=%d, samples=%d, duration=%d seconds\n",
 	log_file, freq, sample, dur);
@@ -812,7 +821,9 @@ int main(int argc, char *argv[])
 				distance[j] = ptr[1+j*2];
 				distance[j] <<= 8;
 				distance[j] += ptr[j*2];
+				//printf("distance[%d]=%d\n", j, distance[j]);
 			}
+
 
 			ptr += 2*num_sensors;
 

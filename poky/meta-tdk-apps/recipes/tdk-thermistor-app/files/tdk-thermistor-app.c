@@ -27,8 +27,8 @@
 #include<time.h>
 #include<linux/types.h>
 
-#define VER_MAJOR (1)
-#define VER_MINOR (2)
+#define VER_MAJOR (0)
+#define VER_MINOR (3)
 #define SUCCESS (0)
 #define FAILURE (-1)
 #define TEMP_SENSOR_B   (3988)
@@ -441,7 +441,7 @@ int main(int argc, char *argv[])
 		return ret;
 	}
 
-        printf("TDK thermistor app, version %d.%d\n",VER_MAJOR,VER_MINOR);
+        printf("TDK-Robotics-RB5-therm-app-%d.%d\n",VER_MAJOR,VER_MINOR);
         // get absolute IIO path & build MPU's sysfs paths
         device_no = process_sysfs_request();
         if (device_no < 0) {
@@ -449,7 +449,7 @@ int main(int argc, char *argv[])
 		 ret = EAGAIN;
                  return ret;
         }
-   
+
 	while ((opt = getopt_long(argc, argv, "hd:e:", options, &option_index)) != -1) {
 		switch (opt) {
 		case 'e':
