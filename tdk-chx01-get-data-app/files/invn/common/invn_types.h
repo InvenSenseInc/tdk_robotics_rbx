@@ -1,19 +1,17 @@
+// SPDX-License-Identifier: Apache-2.0
+//-----------------------------------------------------------------------------
 /*
- * Copyright (c) 2014-2021 InvenSense, Inc.
- * Portions Copyright (c) 2014-2015 Movea.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- *
- * You may obtain a copy of the License at
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+    Copyright © 2014-2015 InvenSense Inc. Portions Copyright © 2014-2015 Movea. All rights reserved.
+
+    This software, related documentation and any modifications thereto (collectively “Software”) is subject
+    to InvenSense and its licensors' intellectual property rights under U.S. and international copyright
+    and other intellectual property rights laws.
+
+    InvenSense and its licensors retain all intellectual property and proprietary rights in and to the Software
+    and any use, reproduction, disclosure or distribution of the Software without an express license agreement
+    from InvenSense is strictly prohibited.
+*/
+//-----------------------------------------------------------------------------
 
 #ifndef INVN_COMMON_INVN_TYPES_H_
 #define INVN_COMMON_INVN_TYPES_H_
@@ -54,52 +52,52 @@
 
 //! \def INVN_FLT_TO_FXP
 //! Convert the \a value from float to QN value. \ingroup invn_macro
-#define INVN_FLT_TO_FXP(value, shift)	((int32_t)  ((float)(value)*(1ULL << (shift)) + ((value >= 0)-0.5f)))
+#define INVN_FLT_TO_FXP(value, shift)	( (int32_t)  ((float)(value)*(1ULL << (shift)) + ( (value>=0)-0.5f )) )
 //! \def INVN_DBL_TO_FXP
 //! Convert the \a value from double to QN value. \ingroup invn_macro
-#define INVN_DBL_TO_FXP(value, shift)	((int32_t)  ((double)(value)*(1ULL << (shift)) + ((value >= 0)-0.5)))
+#define INVN_DBL_TO_FXP(value, shift)	( (int32_t)  ((double)(value)*(1ULL << (shift)) + ( (value>=0)-0.5 )) )
 //! \def INVN_FLT_TO_UFXP
 //! Convert the \a value from float to unsigned QN value. \ingroup invn_macro
-#define INVN_FLT_TO_UFXP(value, shift)	((uint32_t) ((float)(value)*(1ULL << (shift)) + 0.5f))
+#define INVN_FLT_TO_UFXP(value, shift)	( (uint32_t) ((float)(value)*(1ULL << (shift)) + 0.5f) )
 //! \def INVN_DBL_TO_UFXP
 //! Convert the \a value from double to unsigned QN value. \ingroup invn_macro
-#define INVN_DBL_TO_UFXP(value, shift)	((uint32_t) ((double)(value)*(1ULL << (shift)) + 0.5))
+#define INVN_DBL_TO_UFXP(value, shift)	( (uint32_t) ((double)(value)*(1ULL << (shift)) + 0.5) )
 //! \def INVN_FXP_TO_FLT
 //! Convert the \a value from QN value to float. \ingroup invn_macro
-#define INVN_FXP_TO_FLT(value, shift)	((float)  (int32_t)(value) / (float)(1ULL << (shift)))
+#define INVN_FXP_TO_FLT(value, shift)	( (float)  (int32_t)(value) / (float)(1ULL << (shift)) )
 //! \def INVN_FXP_TO_DBL
 //! Convert the \a value from QN value to double. \ingroup invn_macro
-#define INVN_FXP_TO_DBL(value, shift)	((double)  (int32_t)(value) / (double)(1ULL << (shift)))
+#define INVN_FXP_TO_DBL(value, shift)	( (double)  (int32_t)(value) / (double)(1ULL << (shift)) )
 //! \def INVN_UFXP_TO_FLT
 //! Convert the \a value from unsigned QN value to float. \ingroup invn_macro
-#define INVN_UFXP_TO_FLT(value, shift)	((float) (uint32_t)(value) / (float)(1ULL << (shift)))
+#define INVN_UFXP_TO_FLT(value, shift)	( (float) (uint32_t)(value) / (float)(1ULL << (shift)) )
 //! \def INVN_UFXP_TO_DBL
 //! Convert the \a value from unsigned QN value to double. \ingroup invn_macro
-#define INVN_UFXP_TO_DBL(value, shift)	((double) (uint32_t)(value) / (double)(1ULL << (shift)))
+#define INVN_UFXP_TO_DBL(value, shift)	( (double) (uint32_t)(value) / (double)(1ULL << (shift)) )
 //! \def INVN_CONVERT_FLT_TO_FXP
 //!	Macro to convert float values from an address into QN values, and copy them to another address. \ingroup invn_macro
-#define INVN_CONVERT_FLT_TO_FXP(fltptr, fixptr, length, shift)	{ int32_t i; for (i = 0; i < (length); ++i) (fixptr)[i] = INVN_FLT_TO_FXP((fltptr)[i], shift); }
+#define INVN_CONVERT_FLT_TO_FXP(fltptr, fixptr, length, shift)	{ int32_t i; for(i=0; i<(length); ++i) (fixptr)[i] = INVN_FLT_TO_FXP((fltptr)[i], shift); }
 //! \def INVN_CONVERT_FLT_TO_UFXP
 //!	Macro to convert float values from an address into unsigned QN values, and copy them to another address. \ingroup invn_macro
-#define INVN_CONVERT_FLT_TO_UFXP(fltptr, fixptr, length, shift)	{ int32_t i; for (i = 0; i < (length); ++i) (fixptr)[i] = INVN_FLT_TO_UFXP((fltptr)[i], shift); }
+#define INVN_CONVERT_FLT_TO_UFXP(fltptr, fixptr, length, shift)	{ int32_t i; for(i=0; i<(length); ++i) (fixptr)[i] = INVN_FLT_TO_UFXP((fltptr)[i], shift); }
 //! \def INVN_CONVERT_DBL_TO_FXP
 //!	Macro to convert double values from an address into QN  values, and copy them to another address. \ingroup invn_macro
-#define INVN_CONVERT_DBL_TO_FXP(fltptr, fixptr, length, shift)	{ int32_t i; for (i = 0; i < (length); ++i) (fixptr)[i] = INVN_DBL_TO_FXP((fltptr)[i], shift); }
+#define INVN_CONVERT_DBL_TO_FXP(fltptr, fixptr, length, shift)	{ int32_t i; for(i=0; i<(length); ++i) (fixptr)[i] = INVN_DBL_TO_FXP((fltptr)[i], shift); }
 //! \def INVN_CONVERT_DBL_TO_UFXP
 //!	Macro to convert double values from an address into unsigned QN values, and copy them to another address. \ingroup invn_macro
-#define INVN_CONVERT_DBL_TO_UFXP(fltptr, fixptr, length, shift)	{ int32_t i; for (i = 0; i < (length); ++i) (fixptr)[i] = INVN_DBL_TO_UFXP((fltptr)[i], shift); }
+#define INVN_CONVERT_DBL_TO_UFXP(fltptr, fixptr, length, shift)	{ int32_t i; for(i=0; i<(length); ++i) (fixptr)[i] = INVN_DBL_TO_UFXP((fltptr)[i], shift); }
 //! \def INVN_CONVERT_FXP_TO_FLT
 //!	Macro to convert QN values from an address into float values, and copy them to another address. \ingroup invn_macro
-#define INVN_CONVERT_FXP_TO_FLT(fixptr, fltptr, length, shift)	{ int32_t i; for (i = 0; i < (length); ++i) (fltptr)[i] = INVN_FXP_TO_FLT((fixptr)[i], shift); }
+#define INVN_CONVERT_FXP_TO_FLT(fixptr, fltptr, length, shift)	{ int32_t i; for(i=0; i<(length); ++i) (fltptr)[i] = INVN_FXP_TO_FLT((fixptr)[i], shift); }
 //! \def INVN_CONVERT_UFXP_TO_FLT
 //!	Macro to convert unsigned QN values from an address into float values, and copy them to another address. \ingroup invn_macro
-#define INVN_CONVERT_UFXP_TO_FLT(fixptr, fltptr, length, shift)	{ int32_t i; for (i = 0; i < (length); ++i) (fltptr)[i] = INVN_UFXP_TO_FLT((fixptr)[i], shift); }
+#define INVN_CONVERT_UFXP_TO_FLT(fixptr, fltptr, length, shift)	{ int32_t i; for(i=0; i<(length); ++i) (fltptr)[i] = INVN_UFXP_TO_FLT((fixptr)[i], shift); }
 //! \def INVN_CONVERT_FXP_TO_DBL
 //!	Macro to convert QN values from an address into double values, and copy them to another address. \ingroup invn_macro
-#define INVN_CONVERT_FXP_TO_DBL(fixptr, fltptr, length, shift)	{ int32_t i; for (i = 0; i < (length); ++i) (fltptr)[i] = INVN_FXP_TO_DBL((fixptr)[i], shift); }
+#define INVN_CONVERT_FXP_TO_DBL(fixptr, fltptr, length, shift)	{ int32_t i; for(i=0; i<(length); ++i) (fltptr)[i] = INVN_FXP_TO_DBL((fixptr)[i], shift); }
 //! \def INVN_CONVERT_UFXP_TO_DBL
 //! \brief Macro to convert unsigned QN values from an address into double values, and copy them to another address. \ingroup invn_macro
-#define INVN_CONVERT_UFXP_TO_DBL(fixptr, fltptr, length, shift)	{ int32_t i; for (i = 0; i < (length); ++i) (fltptr)[i] = INVN_UFXP_TO_DBL((fixptr)[i], shift); }
+#define INVN_CONVERT_UFXP_TO_DBL(fixptr, fltptr, length, shift)	{ int32_t i; for(i=0; i<(length); ++i) (fltptr)[i] = INVN_UFXP_TO_DBL((fixptr)[i], shift); }
 
 
 //=====================================//

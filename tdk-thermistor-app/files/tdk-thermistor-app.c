@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /*
  * Copyright (c) 2018-2020 InvenSense, Inc.
  *
@@ -66,14 +67,14 @@ static const char tdk_therm_name[] = "tdk_thermistor";
 
 /* commandline options */
 static const struct option options[] = {
-    {"help", no_argument, NULL, 'h'},
-    {"enable", required_argument, NULL, 'e'},
-    {0, 0, 0, 0},
+	{"help", no_argument, NULL, 'h'},
+	{"enable", required_argument, NULL, 'e'},
+	{0, 0, 0, 0},
 };
 
-static const char *options_descriptions[] = {
-    "Show this help and quit.",
-    "Turn thermistor buffer on/off.",
+static const char * const options_descriptions[] = {
+	"Show this help and quit.",
+	"Turn thermistor buffer on/off.",
 };
 
 
@@ -92,71 +93,72 @@ static FILE *thermistor_log_fp;
  **/
 static int find_type_by_name(const char *name, const char *type)
 {
-        const struct dirent *ent;
-        int number, numstrlen;
+	const struct dirent *ent;
+	int number, numstrlen;
 
-        FILE *nameFile;
-        DIR *dp;
-        char thisname[MAX_SYSFS_NAME_LEN];
-        char filename[MAX_SYSFS_NAME_LEN];
-        size_t filename_sz = 0;
-        int ret = 0;
-        int status = -1;
+	FILE *nameFile;
+	DIR *dp;
+	char thisname[MAX_SYSFS_NAME_LEN];
+	char filename[MAX_SYSFS_NAME_LEN];
+	size_t filename_sz = 0;
+	int ret = 0;
+	int status = -1;
 
-        dp = opendir(IIO_DIR);
-        if (dp == NULL) {
-                printf("No industrialio devices available\n");
-                return -1;
-        }
+	dp = opendir(IIO_DIR);
+	if (dp == NULL) {
+		printf("No industrialio devices available\n");
+		return -1;
+	}
 
-        while (ent = readdir(dp), ent != NULL) {
-                if (strcmp(ent->d_name, ".") != 0 &&
-                    strcmp(ent->d_name, "..") != 0 &&
-                    strlen(ent->d_name) > strlen(type) &&
-                    strncmp(ent->d_name, type, strlen(type)) == 0) {
+	while (ent = readdir(dp), ent != NULL) {
+		if (strcmp(ent->d_name, ".") != 0 &&
+		    strcmp(ent->d_name, "..") != 0 &&
+		    strlen(ent->d_name) > strlen(type) &&
+		    strncmp(ent->d_name, type, strlen(type)) == 0) {
 
-                        printf("name: %s\n", ent->d_name);
+			printf("name: %s\n", ent->d_name);
 
-                        numstrlen = sscanf(ent->d_name + strlen(type),
-                                           "%d", &number);
-                        filename_sz = strlen(IIO_DIR)
-                                        + strlen(type)
-                                        + numstrlen
-                                        + 6;
-                        /* verify the next character is not a colon */
-                        if (strncmp(ent->d_name + strlen(type) + numstrlen,
-                                        ":", 1) != 0) {
+			numstrlen = sscanf(ent->d_name + strlen(type),
+					   "%d", &number);
+			filename_sz = strlen(IIO_DIR)
+					+ strlen(type)
+					+ numstrlen
+					+ 6;
+		/* verify the next character is not a colon */
+			if (strncmp(ent->d_name + strlen(type) + numstrlen,
+					":", 1) != 0) {
 
-                                snprintf(filename, filename_sz, "%s%s%d/name",
-                                        IIO_DIR, type, number);
+				snprintf(filename, filename_sz, "%s%s%d/name",
+					IIO_DIR, type, number);
 
-                                nameFile = fopen(filename, "r");
-                                if (!nameFile)
-                                        continue;
-                                ret = fscanf(nameFile, "%s", thisname);
-                                fclose(nameFile);
+				nameFile = fopen(filename, "r");
+				if (!nameFile)
+					continue;
+				ret = fscanf(nameFile, "%s", thisname);
+				fclose(nameFile);
 
-                                if (ret == 1 && strcmp(name, thisname) == 0) {
-                                        status = number;
-                                        goto exit_closedir;
-                                }
-                        }
-                }
-        }
+				if (ret == 1 && strcmp(name, thisname) == 0) {
+					status = number;
+					goto exit_closedir;
+				}
+			}
+		}
+	}
 
 exit_closedir:
-        closedir(dp);
-        return status;
+	closedir(dp);
+	return status;
 }
 
-static int process_sysfs_request()
+static int process_sysfs_request(void)
 {
-        int dev_num = find_type_by_name(THERMISTOR_NAME, "iio:device");
-        if (dev_num < 0)
-                return -1;
+	int dev_num = find_type_by_name(THERMISTOR_NAME, "iio:device");
 
-        //sprintf(data, IIO_DIR "iio:device%d", dev_num);
-        return dev_num;
+	if (dev_num < 0)
+		return -1;
+
+	//sprintf(data, IIO_DIR "iio:device%d", dev_num);
+	return dev_num;
 }
 
 /*Process the thermistor reading, convert to degree celcius*/
@@ -171,9 +173,8 @@ static float process_thermistor_sensor_val(u_int16_t temp)
 	DPRINT("Temperature voltage: %f\n", temp_voltage);
 
 	temp_resistance = (33000/temp_voltage) - 10000;
-	if (temp_resistance < 0.0f) {
+	if (temp_resistance < 0.0f)
 		temp_resistance = 0.0f;
-	}
 	DPRINT("Temperature resistance: %f\n", temp_resistance);
 
 	temp_c = (TEMP_SENSOR_B / log(temp_resistance/TEMP_R_INF)) - 273.15;
@@ -206,9 +207,8 @@ static int write_sysfs_int(char *attr_name, int data)
 	char path[1024];
 
 	ret = snprintf(path, sizeof(path), "%s/%s", sysfs_path, attr_name);
-	if (ret < 0 || ret >= (int)sizeof(path)) {
+	if (ret < 0 || ret >= (int)sizeof(path))
 		return ret;
-	}
 
 	ret = 0;
 	printf("sysfs: %d -> %s\n", data, path);
@@ -235,9 +235,8 @@ static int write_sysfs_str(char *attr_name, char *val)
 	char path[1024];
 
 	ret = snprintf(path, sizeof(path), "%s/%s", sysfs_path, attr_name);
-	if (ret < 0 || ret >= (int)sizeof(path)) {
+	if (ret < 0 || ret >= (int)sizeof(path))
 		return ret;
-	}
 
 	ret = 0;
 	printf("sysfs: %s -> %s\n", val, path);
@@ -246,10 +245,10 @@ static int write_sysfs_str(char *attr_name, char *val)
 		ret = -errno;
 		printf("Failed to open %s\n", path);
 	} else {
-	if (fprintf(fp, "%s\n", val) < 0) {
-		printf("Failed to write to %s\n", path);
-		ret = -errno;
-	}
+		if (fprintf(fp, "%s\n", val) < 0) {
+			printf("Failed to write to %s\n", path);
+			ret = -errno;
+		}
 	fclose(fp);
 	}
 	fflush(stdout);
@@ -261,8 +260,7 @@ static void usage(void)
 {
 	unsigned int i;
 
-	printf("Usage:\n\t test-thermistor [-e <enable/disable>]"
-					"\n\nOptions:\n");
+	printf("Usage:\n\t test-thermistor [-e <enable/disable>]\n\nOptions:\n");
 	for (i = 0; options[i].name; i++)
 		printf("\t-%c, --%s\n\t\t\t%s\n",
 	options[i].val, options[i].name,
@@ -279,9 +277,8 @@ static int verify_iio_device_name(void)
 	int ret;
 
 	ret = snprintf(path, sizeof(path), "%s/%s", sysfs_path, SYSFS_CHIP_NAME);
-	if (ret < 0 || ret >= (int)sizeof(path)) {
+	if (ret < 0 || ret >= (int)sizeof(path))
 		return ret;
-	}
 
 	ret = 0;
 	fp = fopen(path, "r");
@@ -349,9 +346,8 @@ static int init_log_file(void)
 					current_tm->tm_year+1900, current_tm->tm_mon+1, current_tm->tm_mday,
 					current_tm->tm_hour, current_tm->tm_min, current_tm->tm_sec,
 					THERMISTOR_LOG_FILE);
-	if (ret < 0 || ret >= (int)sizeof(log_file_name)) {
+	if (ret < 0 || ret >= (int)sizeof(log_file_name))
 		return ret;
-	}
 
 	thermistor_log_fp = fopen(log_file_name, "w+");
 
@@ -401,15 +397,15 @@ static void sig_handler(int s)
 	printf("Disable buffer\n");
 	ret = disable_iio_trigger_buffer();
 	if (ret) {
-	    printf("failed to disable buffer\n");
-	    fflush(stdout);
-	    return;
+		printf("failed to disable buffer\n");
+		fflush(stdout);
+		return;
 	}
 
 	/* close */
 	if (iio_fd != -1) {
-	    close(iio_fd);
-	    iio_fd = -1;
+		close(iio_fd);
+		iio_fd = -1;
 	}
 
 	/*close logfile */
@@ -441,14 +437,14 @@ int main(int argc, char *argv[])
 		return ret;
 	}
 
-        printf("TDK-Robotics-RB5-therm-app-%d.%d\n",VER_MAJOR,VER_MINOR);
-        // get absolute IIO path & build MPU's sysfs paths
-        device_no = process_sysfs_request();
-        if (device_no < 0) {
-                 printf("Cannot find %s sysfs path\n", THERMISTOR_NAME);
-		 ret = EAGAIN;
-                 return ret;
-        }
+	printf("TDK-Robotics-RB5-therm-app-%d.%d\n", VER_MAJOR, VER_MINOR);
+	// get absolute IIO path & build MPU's sysfs paths
+	device_no = process_sysfs_request();
+	if (device_no < 0) {
+		printf("Cannot find %s sysfs path\n", THERMISTOR_NAME);
+		ret = EAGAIN;
+		return ret;
+	}
 
 	while ((opt = getopt_long(argc, argv, "hd:e:", options, &option_index)) != -1) {
 		switch (opt) {
@@ -458,8 +454,8 @@ int main(int argc, char *argv[])
 		case 'h':
 			usage();
 		return 0;
-	     }
-	 }
+		}
+	}
 
 	/* signal handling */
 	sig_action.sa_handler = sig_handler;
@@ -544,4 +540,3 @@ int main(int argc, char *argv[])
 	}
 	return ret;
 }
-

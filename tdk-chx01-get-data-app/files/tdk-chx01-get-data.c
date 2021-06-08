@@ -1,5 +1,5 @@
-/*
- * Copyright (c) 2020-2021 InvenSense, Inc.
+// SPDX-License-Identifier: Apache-2.0
+/* Copyright (c) 2020-2021 InvenSense, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,17 +23,22 @@
 #include <unistd.h>
 #include <string.h>
 #include <math.h>
+#include<errno.h>
 
 #include "invn_algo_rangefinder.h"
+#include "invn_algo_floor_type_fxp.h"
+#include "invn_algo_cliff_detection.h"
+#include "invn_algo_obstacleposition.h"
 
 #define DEV_NUM_BOUNDARY 3
 #define TX_RX_MODE   0x10
 #define RX_ONLY_MODE   0x20
 
-long long orig_buffer[32];
+long long orig_buffer[260];
 
 int sensor_connected[] = {0, 0, 0, 0, 0, 0};
 uint32_t op_freq[] = {0, 0, 0, 0, 0, 0};
+static unsigned do_cliff=0, do_floor_type=0, do_obstacle_detect=0, do_range_finder=0;
 
 
 /*! \struct InvnRangeFinder
@@ -47,6 +52,27 @@ union InvnRangeFinder {
 	uint32_t data32;
 } InvnRangeFinder;
 
+/*! \struct InvnFloorType
+ * InvnFloorType data structure that store internal algorithm state.
+ * The struct below shows one method to align the data buffer pointer to 32 bit
+ * for 32bit MCU. Other methods can be used to align memory using malloc or
+ * attribute((aligned, 4))
+ */
+union InvnFloorType {
+	uint8_t data[INVN_FLOOR_TYPE_DATA_STRUCTURE_SIZE];
+	uint32_t data32;
+} InvnFloorType;
+
+/*! \struct InvnCliffDetection
+ * InvnCliffDetection data structure that store internal algorithm state.
+ * The struct below shows one method to align the data buffer pointer to 32
+ * bit for 32bit MCU. Other methods can be used to align memory using malloc
+ * or attribute((aligned, 4))
+ */
+union InvnCliffDetection {
+	uint8_t data[INVN_CLIFF_DETECTION_DATA_STRUCTURE_SIZE];
+	uint32_t data32;
+} InvnCliffDetection;
 
 #define CHIRP_NAME		"ch101"
 #define IIO_DIR		"/sys/bus/iio/devices/"
@@ -57,9 +83,10 @@ union InvnRangeFinder {
 #define CH201_DEFAULT_FW       5
 
 #define VER_MAJOR (0)
-#define VER_MINOR (6)
+#define VER_MINOR (7)
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
+#define MAX_CH_IIO_BUFFER 256
 
 static const char  *const fw_names[] = {
 "v39.hex",
@@ -76,8 +103,158 @@ static char *firmware_path;
 static char sysfs_path[MAX_SYSFS_NAME_LEN] = {0};
 static char dev_path[MAX_SYSFS_NAME_LEN] = {0};
 static char sensor_connection[6];
+char mode[6];
+static uint16_t floor_distance_mm = 33;
 
-static int get_lib_range(uint32_t fop, int16_t *iq_buffer, int mode,
+static int get_lib_floortype(int index, int16_t *iq_buffer, int samples)
+{
+	int res;
+	static int initialized;
+
+#define FLOOR_DATA_START_READ_IDX 8
+#define FLOOR_DATA_DECIMATION 1
+
+	static InvnAlgoFloorTypeFxpConfig config;
+
+	static InvnAlgoFloorTypeFxpInput inputs;
+
+	static InvnAlgoFloorTypeFxpOutput outputs;
+
+	static union InvnFloorType algo;
+
+	if (initialized == 0) {
+            printf("Init floor type at distance %u mm and op_freq %d\n", floor_distance_mm, op_freq[2]);
+		invn_algo_floor_type_fxp_generate_default_config(
+			floor_distance_mm,
+                        FLOOR_DATA_START_READ_IDX,
+                        FLOOR_DATA_DECIMATION,
+                        op_freq[2], /*INVN_ALGO_FLOORTYPE_TYPICAL_OPERATION_FREQUENCY,*/
+                        &config);
+		invn_algo_floor_type_fxp_init(&algo, &config);
+		initialized = 1;
+	}
+
+	printf("index=%d\n", index);
+	inputs.time = index;
+	inputs.nbr_samples = samples;
+	inputs.buffer.iq = iq_buffer;
+	inputs.mask = INVN_FLOORTYPE_FXP_INPUT_TYPE_IQ_DATA;
+
+	invn_algo_floor_type_fxp_process(&algo, &inputs, &outputs);
+
+	if (outputs.floor_type == 1)
+		printf("Floor type: HARD\n");
+	else
+		printf("Floor type: SOFT\n");
+
+	return res;
+}
+
+static int get_cliff_detection(int index, int16_t *iq_buffer, int sensor_mode,
+	int samples)
+{
+	int res;
+	int dev_num;
+	static int initialized;
+
+	static InvnAlgoCliffDetectionConfig config;
+
+	static InvnAlgoCliffDetectionInput inputs;
+
+	static InvnAlgoCliffDetectionOutput outputs;
+
+	int nb_skip_sample_pitch_catch;
+	int actual_range = 0;
+
+	static union InvnCliffDetection algo;
+	int error_code;
+
+	if (sensor_mode != RX_ONLY_MODE)
+		return -EINVAL;
+
+	// Define algofrithm config
+	if (initialized == 0) {
+		printf("Init cliff\n");
+		invn_algo_cliff_detection_generate_default_config(&config);
+		error_code = invn_algo_cliff_detection_init(&algo, &config);
+                if (error_code != 0)
+                {
+                    fprintf(stderr, "Cliff detection initialization failed with code %d", error_code);
+                    return error_code;
+                }
+		initialized = 1;
+	}
+
+	for (dev_num = 0; dev_num < 2; dev_num++) {
+		if (mode[dev_num] == RX_ONLY_MODE)
+			inputs.Rx = sensor_connection[dev_num];
+		else
+			inputs.Tx = sensor_connection[dev_num];
+	}
+	printf("cliff: Tx=%d, RX=%d, index=%d\n", inputs.Rx, inputs.Tx, index);
+	inputs.time = index;
+	inputs.nbr_samples = samples;
+	inputs.iq_buffer = iq_buffer;
+
+	invn_algo_cliff_detection_process(&algo, &inputs, &outputs);
+	switch (outputs.cliff_detection) {
+	case INVN_CLIFF_DETECTION_CLIFF_RESULT_FLOOR:
+		printf("cliff: floor\n");
+		break;
+	case INVN_CLIFF_DETECTION_CLIFF_RESULT_UNKNOWN:
+		printf("cliff: unknow\n");
+		break;
+	case INVN_CLIFF_DETECTION_CLIFF_RESULT_CLIFF:
+		printf("cliff: cliff\n");
+		break;
+	default:
+		printf("ERROR\n");
+		break;
+	}
+
+
+	return res;
+}
+
+/*! \struct InvnObstaclePosition
+ * InvnObstaclePosition data structure that store internal algorithm state.
+ * The struct below shows one method to align the data buffer pointer to 32
+ * bit for 32bit MCU. Other methods can be used to align memory using malloc or
+ *  attribute((aligned, 4))
+ */
+union InvnObstaclePosition {
+	uint8_t data[INVN_OBSTACLE_POSITION_DATA_STRUCTURE_SIZE];
+	uint32_t data32;
+} InvnObstaclePosition;
+
+static int get_obstacle_detection(uint32_t fop, int16_t *iq_buffer,
+	int samples, unsigned short *distance, unsigned short *amplitude)
+{
+	int res;
+
+	InvnAlgoObstaclePositionConfig config;
+	InvnAlgoObstaclePositionInput inputs;
+	InvnAlgoObstaclePositionOutput outputs;
+
+	union InvnObstaclePosition algo;
+
+
+	invn_algo_obstacleposition_generate_default_config(&config);
+
+	invn_algo_obstacleposition_init(&algo, &config);
+
+	inputs.time = 0;
+	inputs.sensor_ID_Tx = 0;
+	inputs.sensor_ID_Rx = 0;
+	inputs.nbr_samples = samples;
+	inputs.iq_buffer = iq_buffer;
+
+	invn_algo_obstacleposition_process(&algo, &inputs, &outputs);
+
+	return res;
+}
+
+static int get_lib_range(uint32_t fop, int16_t *iq_buffer, int sensor_mode,
 	int samples, unsigned short *distance, unsigned short *amplitude)
 {
 	int res;
@@ -90,7 +267,7 @@ static int get_lib_range(uint32_t fop, int16_t *iq_buffer, int mode,
 	union InvnRangeFinder algo;
 
 	invn_algo_rangefinder_generate_default_config(&config);
-	if (mode == TX_RX_MODE) {
+	if (sensor_mode == TX_RX_MODE) {
 		config.sensor_FOP = fop; // update config FOP to the sensor FOP
 		invn_algo_rangefinder_init(&algo, &config);
 		inputs.time = 0;
@@ -161,6 +338,7 @@ int inv_load_dmp(char *dmp_path, int dmp_version,
 	printf("input name=%s\n", p);
 
 	bytesWritten = fwrite(p, 1, write_size, fp);
+	
 	if (bytesWritten != write_size) {
 		printf(
 			"bytes written (%d) not match requested length (%d)\n",
@@ -168,6 +346,7 @@ int inv_load_dmp(char *dmp_path, int dmp_version,
 		result = -1;
 	}
 
+    
 	fclose(fp);
 
 	if (dmp_version != 0xff) {
@@ -196,6 +375,7 @@ int inv_load_dmp(char *dmp_path, int dmp_version,
 		printf("dmp firmware file %s open fail\n", bin_file);
 		return -EINVAL;
 	}
+	
 
 	fseek(fp_read, 0L, SEEK_END);
 	len = ftell(fp_read);
@@ -465,7 +645,6 @@ float sample_to_mm[6];
 int8_t port_map[6] = {4, 5, 6, 1, 2, 3};
 
 unsigned short distance[6], amplitude[6];
-char mode[6];
 void print_header(int sample, int frequency, FILE *fp)
 {
 	int i, j;
@@ -517,7 +696,14 @@ void print_header(int sample, int frequency, FILE *fp)
 			fprintf(fp, "%d, ", sample);
 	}
 
-	fprintf(fp, "\n# Sensors NB First samples skipped:, 0, 0\n");
+	fprintf(fp, "\n# Sensors NB First samples skipped:, ");
+
+	for (j = 0; j < 6; j++) {
+		if (sensor_connected[j])
+			fprintf(fp, "0, ");
+	}
+	fprintf(fp, "\n");
+
 	for (j = 3; j < 6; j++) {
 		if (sensor_connected[j]) {
 			fprintf(fp,
@@ -557,6 +743,16 @@ void print_header(int sample, int frequency, FILE *fp)
 
 static void print_help(void)
 {
+	printf("\n\nTDK-Robotics-RB5-chx01-app-%d.%d\n\n",
+				VER_MAJOR, VER_MINOR);
+
+	printf("RangeFinder version: %s\n", invn_algo_rangefinder_version());
+	printf("Cliff detection version %s\n",
+				invn_algo_cliff_detection_version());
+	printf("Floor type detection %s\n", invn_algo_floor_type_fxp_version());
+	printf("Obstacle position %s\n", invn_algo_obstacleposition_version());
+
+
 	printf("Usage:\n");
 	printf("-h: print this help\n");
 	printf("-d x: duration,  unit in seconds. default: 10 seconds\n");
@@ -565,17 +761,20 @@ static void print_help(void)
 	printf("-n: not loading firmware. Default will load firmware\n");
 	printf(
 	"-l string: output logging file name. Default: \"/usr/chirp.csv\"\n");
-
+        printf("-C Do cliff detection\n");
+        printf("-F[d] Do floor type detection [with optionnal distance in mm (default is %dmm)]\n", floor_distance_mm);
+        printf("-O Do obstacle detection\n");
+        printf("-R Do range finder\n");
 }
 
 void log_data(int index, int num_sensors, int sample, FILE *log_fp,
 	long long last_timestamp)
 {
-	int dev_num, i, j;
+	int dev_num, i, j, tx_sensor;
 
 	for (dev_num = 0; dev_num < num_sensors; dev_num++) {
 	//only CH101 and only in RX_TX mode, we call algo to calculate
-		if (((mode[dev_num] == 0x20) || (mode[dev_num] == 0x10)) &&
+		if (((mode[dev_num] == RX_ONLY_MODE) || (mode[dev_num] == TX_RX_MODE)) &&
 			(sensor_connection[dev_num] < 3)) {
 			for (i = 0; i < sample; i++) {
 				iq_buffer[2*i] = I[dev_num][i];
@@ -590,6 +789,11 @@ void log_data(int index, int num_sensors, int sample, FILE *log_fp,
 				iq_buffer, mode[dev_num], sample,
 				 &distance[dev_num], &amplitude[dev_num]);
 
+			if (do_floor_type && (sensor_connection[dev_num] == 2))
+				get_lib_floortype(index, iq_buffer, sample);
+                        if (do_cliff)
+                            get_cliff_detection(index, iq_buffer,
+                                                mode[dev_num], sample);
 		}
 	}
 
@@ -602,7 +806,7 @@ void log_data(int index, int num_sensors, int sample, FILE *log_fp,
 		//printf("%f, ", last_timestamp/1000000000.0);
 
 		//TX_RX mode
-		if (mode[dev_num] == 0x10) {
+		if (mode[dev_num] == TX_RX_MODE) {
 			fprintf(log_fp, "%d, ",
 				port_map[sensor_connection[dev_num]]);
 			fprintf(log_fp, "%d, ",
@@ -610,10 +814,10 @@ void log_data(int index, int num_sensors, int sample, FILE *log_fp,
 		}
 
 		//RX only mode.
-		if (mode[dev_num] == 0x20) {
+		if (mode[dev_num] == RX_ONLY_MODE) {
 			for (j = 0; j < num_sensors; j++) {
-				if ((mode[j] == 0x10) &&
-				(sensor_connection[j] < 3)) {
+				if ((mode[j] == TX_RX_MODE) &&
+				(sensor_connection[j] < 2)) {
 					fprintf(log_fp, "%d, ",
 					port_map[sensor_connection[j]]);
 				}
@@ -666,10 +870,16 @@ int main(int argc, char *argv[])
 	char *log_file;
 	int c, fp_writes;
 	int load_firmware_flag;
+	unsigned int retry = 0;
 
 	buffer = (char *)orig_buffer;
 	printf("\n\nTDK-Robotics-RB5-chx01-app-%d.%d\n\n",
 		VER_MAJOR, VER_MINOR);
+	printf("RangeFinder version: %s\n", invn_algo_rangefinder_version());
+	printf("Cliff detection version %s\n",
+				invn_algo_cliff_detection_version());
+	printf("Floor type detection %s\n", invn_algo_floor_type_fxp_version());
+	printf("Obstacle position %s\n", invn_algo_obstacleposition_version());
 
 	// get absolute IIO path & build MPU's sysfs paths
 	if (process_sysfs_request(sysfs_path) < 0) {
@@ -687,7 +897,7 @@ int main(int argc, char *argv[])
 	load_firmware_flag = 1;
 
 	opterr = 0;
-	while ((c = getopt(argc, argv, "hd:s:f:l:n")) != -1) {
+	while ((c = getopt(argc, argv, "hd:s:f:l:nCF::OR")) != -1) {
 		switch (c) {
 		case 'h':
 			print_help();
@@ -707,17 +917,37 @@ int main(int argc, char *argv[])
 		case 'n':
 			load_firmware_flag = 0;
 			break;
+		case 'C':
+                    do_cliff=1;
+			break;
+		case 'F':
+                    do_floor_type=1;
+                    if (optarg) {
+                        unsigned d=atoi(optarg);
+                        if ((d >= 25) && (d <= 65))
+                            floor_distance_mm = d;
+                        else {
+                            printf("Floor Type argument %d: not within accepted range 25-65mm\n", d);
+                            return 1;
+                        }
+                    }
+			break;
+		case 'O':
+                    do_obstacle_detect=1;
+			break;
+		case 'R':
+                     do_range_finder=1;
+			break;
 		default:
 			abort();
 		}
 	}
-	if (freq > 10)
-		freq = 10;
+	if (freq > 100)
+		freq = 100;
 	if (sample > 225)
 		sample = 225;
 
-	printf(
-"options, log file=%s, frequency=%d, samples=%d, duration=%d seconds\n",
+	printf("options, log file=%s, frequency=%d, samples=%d, duration=%d seconds\n",
 	log_file, freq, sample, dur);
 
 	printf("firmware load=%d\n", load_firmware_flag);
@@ -770,6 +1000,12 @@ int main(int argc, char *argv[])
 		}
 	}
 
+        printf("Will do:\n\tCliff detection: %s\n\tFloor Type: %s\n\tObstacle Detection: %s\n\tRange Finder: %s\n",
+               do_cliff ? "yes" : "no",
+               do_floor_type ? (sensor_connected[2] ? "yes" : "Disabled (sensor 3 not present)") : "no",
+               do_obstacle_detect ? "yes" : "no",
+               do_range_finder ? "yes" : "no");
+
 	log_fp = fopen(log_file, "wt");
 	if (log_fp == NULL) {
 		printf("error opening log file %s\n", log_file);
@@ -778,6 +1014,12 @@ int main(int argc, char *argv[])
 	print_header(sample, freq, log_fp);
 
 	scan_bytes += 32;
+
+	if (num_sensors == 6)
+	{
+        /*IIO buffer for 6 sensors is 256*/
+		scan_bytes = MAX_CH_IIO_BUFFER;
+	}
 
 	printf("counter=%d\n", counter);
 
@@ -810,11 +1052,13 @@ int main(int argc, char *argv[])
 
 
 	pfds[0].fd = open(dev_path, O_RDONLY);
-	pfds[0].events = (POLLIN | POLLRDNORM);
+	pfds[0].events = (POLLIN | POLLRDNORM | POLLERR |POLLNVAL );
 	last_timestamp = 0;
-
+  
 	ready = 1;
 	fp_writes = 1;
+	index = 0;
+
 	while (ready == 1) {
 
 		char *tmp;
@@ -825,22 +1069,33 @@ int main(int argc, char *argv[])
 		pfds[0].revents = 0;
 		//printf("before new polling counter=%d\n", counter);
 		nfds = 1;
+
 		ready = poll(pfds, nfds, 5000);
-		//printf("pass poll 0x%x, ready=%d\n", pfds[0].revents, ready);
+		//printf("pass fd  %d, poll 0x%x, ready=%d\n", pfds[0].fd,pfds[0].revents, ready);
 		if (ready == -1)
 			printf("poll error\n");
+
 		if (pfds[0].revents & (POLLIN | POLLRDNORM)) {
-			target_bytes = scan_bytes;
+     		target_bytes = scan_bytes;
+			//printf("target bytes=%d and fd = %d\n",target_bytes,pfds[0].fd);
+
 			bytes = read(pfds[0].fd, buffer, target_bytes);
+            if(bytes < 0)
+			{
+				printf("Read IIO buffer error: %s\n", strerror(errno));
+                break;
+			}
+            else if (bytes == target_bytes){
 			total_bytes += bytes;
 			tmp = (char *)&timestamp;
 			memcpy(tmp, &buffer[scan_bytes - 8], 8);
+			//printf("ts %lld\n",timestamp);
 	//amplitude 2 bytes + intensity data
 	//2 bytes 224/8 = 28bytes(IQ)+mode(1 bytes)
 			target_bytes = scan_bytes-32;
 			i = 0;
 			//for (i = 0; i < 64; i++) {
-				//printf("%d, ", buffer[i]);
+			//	printf("%d, ", buffer[i]);
 			//}
 			//printf("\n");
 			if (last_timestamp == 0)
@@ -859,20 +1114,22 @@ int main(int argc, char *argv[])
 
 			//printf("\nindex=%d\n", index);
 			for (j = 0; j < num_sensors; j++) {
+				//printf("j = %d\n", j);
 				for (i = 0; i < 7; i++) {
+					//printf("\ni=%d\n", (i+index));
 					value = buffer[i*4+1+j*28];
 					value <<= 8;
 					value += buffer[i*4+j*28];
 					I[j][i+index] = value;
-
+					
 					value = buffer[i*4+3+j*28];
 					value <<= 8;
 					value += buffer[i*4+2+j*28];
-
 					Q[j][i+index] = value;
 					//printf("%d, %d", I[j][i], Q[j][i]);
 				}
 			}
+
 			//printf("\n");
 			index += 7;
 
@@ -898,6 +1155,17 @@ int main(int argc, char *argv[])
 
 			for (j = 0; j < num_sensors; j++)
 				mode[j] = ptr[j];
+			}
+			else
+			{
+                printf("Expected %d bytes, read %d\n",bytes,target_bytes);
+				retry++;
+				if(retry < 6)
+				{
+				  printf("Max retry reached\n");
+				  break;
+				}
+			}	
 		}
 	}
 	switch_streaming(0);
